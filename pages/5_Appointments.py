@@ -67,36 +67,91 @@ def append_to_sheet(worksheet_name, data_dict):
 
 @st.cache_data
 def load_data_from_sheets(json_credentials, sheet_url):
-    """Load data from Google Sheets with error handling"""
+    """Load data from Google Sheets with comprehensive error handling"""
     try:
-        # Parse JSON credentials
-        if isinstance(json_credentials, str):
+        # Parse JSON credentials with better handling
+        creds_dict = None
+        
+        if isinstance(json_credentials, bytes):
+            # Convert bytes to string first
+            json_str = json_credentials.decode('utf-8')
+            creds_dict = json.loads(json_str)
+        elif isinstance(json_credentials, str):
             creds_dict = json.loads(json_credentials)
         else:
+            # Assume it's a file-like object
             creds_dict = json.load(json_credentials)
         
-        # Authenticate and connect
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SHEET_SCOPE)
-        client = gspread.authorize(creds)
+        # Validate required fields in service account JSON
+        required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email', 'client_id']
+        missing_fields = [field for field in required_fields if field not in creds_dict]
         
-        # Extract sheet ID from URL
-        sheet_id = sheet_url.split('/d/')[1].split('/')[0]
-        spreadsheet = client.open_by_key(sheet_id)
+        if missing_fields:
+            return None, f"Invalid service account JSON. Missing required fields: {', '.join(missing_fields)}"
+        
+        if creds_dict.get('type') != 'service_account':
+            return None, "Invalid JSON file. This must be a service account key file, not a different type of credential."
+        
+        # Authenticate and connect
+        try:
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SHEET_SCOPE)
+            client = gspread.authorize(creds)
+        except Exception as auth_error:
+            return None, f"Authentication failed. Please check your service account credentials: {str(auth_error)}"
+        
+        # Extract and validate sheet ID from URL
+        try:
+            if '/d/' not in sheet_url:
+                return None, "Invalid Google Sheets URL format. URL should contain '/d/' followed by the sheet ID."
+            
+            sheet_id = sheet_url.split('/d/')[1].split('/')[0]
+            if not sheet_id:
+                return None, "Could not extract sheet ID from URL. Please check the Google Sheets URL."
+            
+            spreadsheet = client.open_by_key(sheet_id)
+        except gspread.SpreadsheetNotFound:
+            return None, f"Spreadsheet not found. Please check: 1) The URL is correct, 2) The sheet is shared with the service account email: {creds_dict.get('client_email', 'N/A')}"
+        except gspread.exceptions.APIError as api_error:
+            return None, f"Google Sheets API error: {str(api_error)}. This might be a permissions issue."
+        except Exception as sheet_error:
+            return None, f"Error accessing spreadsheet: {str(sheet_error)}"
         
         # Load all worksheets
         worksheets = {}
-        for worksheet in spreadsheet.worksheets():
+        worksheet_errors = []
+        
+        try:
+            all_worksheets = spreadsheet.worksheets()
+            if not all_worksheets:
+                return None, "No worksheets found in the spreadsheet."
+        except Exception as e:
+            return None, f"Error listing worksheets: {str(e)}"
+        
+        for worksheet in all_worksheets:
             try:
                 data = worksheet.get_all_records()
                 if data:  # Only add non-empty worksheets
                     worksheets[worksheet.title] = pd.DataFrame(data)
+                else:
+                    # Still add empty worksheets but with empty DataFrame
+                    worksheets[worksheet.title] = pd.DataFrame()
             except Exception as e:
-                st.warning(f"Could not load worksheet '{worksheet.title}': {str(e)}")
+                worksheet_errors.append(f"'{worksheet.title}': {str(e)}")
         
-        return worksheets, None
+        if not worksheets and worksheet_errors:
+            return None, f"Could not load any worksheets. Errors: {'; '.join(worksheet_errors)}"
+        
+        # Return worksheets with any non-critical errors as warnings
+        error_msg = None
+        if worksheet_errors:
+            error_msg = f"Some worksheets had issues: {'; '.join(worksheet_errors)}"
+        
+        return worksheets, error_msg
     
+    except json.JSONDecodeError as json_error:
+        return None, f"Invalid JSON file format: {str(json_error)}. Please ensure you uploaded a valid service account JSON file."
     except Exception as e:
-        return None, str(e)
+        return None, f"Unexpected error during data loading: {str(e)}"
 
 def create_sample_data():
     """Create sample data if no Google Sheets connection"""
@@ -137,37 +192,113 @@ def sidebar_navigation():
     # Handle file upload
     if json_file is not None:
         try:
-            # Read the uploaded file
+            # Read the uploaded file content
             json_content = json_file.read()
             
-            with st.spinner("Loading data from Google Sheets..."):
+            # Show loading spinner
+            with st.spinner("🔄 Connecting to Google Sheets..."):
                 worksheets, error = load_data_from_sheets(json_content, STATIC_SHEET_URL)
             
-            if error:
-                st.sidebar.error(f"Error loading data: {error}")
+            if error and worksheets is None:
+                # Critical error - connection failed
+                st.sidebar.error("❌ Connection Failed")
+                with st.sidebar.expander("🔍 Error Details", expanded=True):
+                    st.error(f"**Error:** {error}")
+                    
+                    # Provide helpful troubleshooting tips
+                    st.markdown("### 🔧 Troubleshooting Tips:")
+                    st.markdown("""
+                    **1. Check your service account JSON file:**
+                    - Must be a valid service account key (not OAuth client)
+                    - Should contain fields like `client_email`, `private_key`, etc.
+                    
+                    **2. Verify Google Sheets permissions:**
+                    - Share your Google Sheet with the service account email
+                    - Service account email format: `xxx@yyy.iam.gserviceaccount.com`
+                    
+                    **3. Check the Google Sheets URL:**
+                    - URL should be in format: `https://docs.google.com/spreadsheets/d/SHEET_ID/...`
+                    - Make sure the sheet is not private or restricted
+                    
+                    **4. API Access:**
+                    - Ensure Google Sheets API is enabled in your Google Cloud Console
+                    - Check if Google Drive API is also enabled
+                    """)
+                
+                # Fall back to sample data
                 st.session_state.worksheets = create_sample_data()
                 st.session_state.data_loaded = False
                 st.session_state.error_message = error
                 st.session_state.client = None
                 st.session_state.spreadsheet = None
-            else:
-                st.sidebar.success("✅ Data loaded successfully!")
+                
+            elif error and worksheets is not None:
+                # Partial success - some worksheets loaded with warnings
+                st.sidebar.warning("⚠️ Partial Success")
+                st.sidebar.success("✅ Connected to Google Sheets")
+                with st.sidebar.expander("⚠️ Warnings"):
+                    st.warning(error)
+                
                 st.session_state.worksheets = worksheets
                 st.session_state.data_loaded = True
                 st.session_state.error_message = None
                 
                 # Store client and spreadsheet for appending data
-                creds_dict = json.loads(json_content) if isinstance(json_content, bytes) else json.load(json_content)
-                creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SHEET_SCOPE)
-                client = gspread.authorize(creds)
-                sheet_id = STATIC_SHEET_URL.split('/d/')[1].split('/')[0]
-                st.session_state.client = client
-                st.session_state.spreadsheet = client.open_by_key(sheet_id)
+                try:
+                    json_str = json_content.decode('utf-8') if isinstance(json_content, bytes) else json_content
+                    creds_dict = json.loads(json_str)
+                    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SHEET_SCOPE)
+                    client = gspread.authorize(creds)
+                    sheet_id = STATIC_SHEET_URL.split('/d/')[1].split('/')[0]
+                    st.session_state.client = client
+                    st.session_state.spreadsheet = client.open_by_key(sheet_id)
+                except Exception as e:
+                    st.sidebar.error(f"Error storing connection: {str(e)}")
+                    st.session_state.client = None
+                    st.session_state.spreadsheet = None
+                
+            else:
+                # Complete success
+                st.sidebar.success("✅ Successfully Connected!")
+                with st.sidebar.expander("📊 Connection Details"):
+                    st.success("**Status:** Connected to Google Sheets")
+                    st.info(f"**Worksheets Found:** {len(worksheets)}")
+                    for name, df in worksheets.items():
+                        st.text(f"• {name}: {len(df)} rows")
+                
+                st.session_state.worksheets = worksheets
+                st.session_state.data_loaded = True
+                st.session_state.error_message = None
+                
+                # Store client and spreadsheet for appending data
+                try:
+                    json_str = json_content.decode('utf-8') if isinstance(json_content, bytes) else json_content
+                    creds_dict = json.loads(json_str)
+                    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, SHEET_SCOPE)
+                    client = gspread.authorize(creds)
+                    sheet_id = STATIC_SHEET_URL.split('/d/')[1].split('/')[0]
+                    st.session_state.client = client
+                    st.session_state.spreadsheet = client.open_by_key(sheet_id)
+                except Exception as e:
+                    st.sidebar.error(f"Error storing connection: {str(e)}")
+                    st.session_state.client = None
+                    st.session_state.spreadsheet = None
                 
         except Exception as e:
-            st.sidebar.error(f"Error processing file: {str(e)}")
+            st.sidebar.error("❌ File Processing Error")
+            with st.sidebar.expander("🔍 Error Details", expanded=True):
+                st.error(f"**Error processing uploaded file:** {str(e)}")
+                st.markdown("### 📝 File Requirements:")
+                st.markdown("""
+                - Must be a `.json` file
+                - Must be a valid Google Cloud service account key
+                - File should be downloaded from Google Cloud Console
+                - File size should be reasonable (< 10MB)
+                """)
+            
             st.session_state.worksheets = create_sample_data()
             st.session_state.data_loaded = False
+            st.session_state.error_message = f"File processing error: {str(e)}"
             st.session_state.client = None
             st.session_state.spreadsheet = None
     
@@ -181,9 +312,38 @@ def sidebar_navigation():
     st.sidebar.markdown("---")
     st.sidebar.markdown("✅ **Data Source:**")
     if st.session_state.data_loaded:
-        st.sidebar.success("Google Sheets Connected")
+        st.sidebar.success("🔗 Google Sheets Connected")
+        if st.session_state.worksheets:
+            total_records = sum(len(df) for df in st.session_state.worksheets.values())
+            st.sidebar.info(f"📊 Total Records: {total_records}")
     else:
-        st.sidebar.info("Using Sample Data")
+        st.sidebar.info("💻 Using Sample Data")
+        if st.session_state.error_message:
+            st.sidebar.caption("⚠️ Connection issue - see error above")
+    
+    # Connection status and help
+    with st.sidebar.expander("ℹ️ Connection Help"):
+        st.markdown("""
+        ### 🔐 How to get your service account JSON:
+        
+        1. **Go to Google Cloud Console**
+        2. **Select your project** (or create one)
+        3. **Enable APIs:**
+           - Google Sheets API
+           - Google Drive API
+        4. **Create Service Account:**
+           - Go to IAM & Admin → Service Accounts
+           - Click "Create Service Account"
+           - Download the JSON key file
+        5. **Share your Google Sheet:**
+           - Share with the service account email
+           - Give "Editor" permissions
+        
+        ### 📋 Current Sheet URL:
+        ```
+        https://docs.google.com/spreadsheets/d/1mgToY7I10uwPrdPnjAO9gosgoaEKJCf7nv-E0-1UfVQ/edit
+        ```
+        """)
     
     return page
 
@@ -475,10 +635,53 @@ def main():
     # Get current page from sidebar
     current_page = sidebar_navigation()
     
-    # Show error message if there was an authentication issue
-    if st.session_state.error_message:
-        st.error(f"Authentication Error: {st.session_state.error_message}")
-        st.info("Please check your service account JSON file and try again. Using sample data for now.")
+    # Show detailed error information if there was an authentication issue
+    if st.session_state.error_message and not st.session_state.data_loaded:
+        st.error("🚫 **Google Sheets Connection Failed**")
+        
+        with st.expander("🔍 **Detailed Error Information**", expanded=True):
+            st.error(f"**Error Details:** {st.session_state.error_message}")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown("### 🔧 **Quick Fixes:**")
+                st.markdown("""
+                1. **Check your JSON file:**
+                   - Must be a service account key (not OAuth client)
+                   - Download fresh copy from Google Cloud Console
+                
+                2. **Verify sheet sharing:**
+                   - Share your Google Sheet with service account email
+                   - Email format: `xxx@yyy.iam.gserviceaccount.com`
+                   - Give "Editor" permissions
+                
+                3. **Enable required APIs:**
+                   - Google Sheets API
+                   - Google Drive API
+                """)
+            
+            with col2:
+                st.markdown("### 📚 **Step-by-Step Setup:**")
+                st.markdown("""
+                **1. Google Cloud Console Setup:**
+                - Create/select a project
+                - Enable Google Sheets + Drive APIs
+                - Create service account
+                - Download JSON key
+                
+                **2. Google Sheets Setup:**
+                - Open your Google Sheet
+                - Click "Share" → Add service account email
+                - Set permission to "Editor"
+                
+                **3. Upload & Test:**
+                - Upload JSON file using sidebar
+                - Check connection status
+                """)
+        
+        st.info("💡 **Don't worry!** You can still use the app with sample data while troubleshooting the connection.")
+        st.markdown("---")
     
     # Route to appropriate page
     if current_page == "📋 Dashboard":
