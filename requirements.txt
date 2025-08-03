@@ -14,3 +14,4 @@ python-dotenv>=1.0.0
 streamlit_calendar
 fpdf
 gspread
+oauth2client
