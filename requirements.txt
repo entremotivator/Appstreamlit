@@ -16,3 +16,4 @@ fpdf
 gspread
 oauth2client
 streamlit_autorefresh
+gspread_dataframe
