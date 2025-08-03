@@ -3,15 +3,14 @@ import pandas as pd
 import gspread
 from gspread_dataframe import get_as_dataframe
 from oauth2client.service_account import ServiceAccountCredentials
+import io
+import json
 
 st.set_page_config(page_title="Call Analysis CRM", layout="wide")
-
 st.title("📞 Call CRM Dashboard")
 
-# Hardcoded Google Sheet URL
 GSHEET_URL = "https://docs.google.com/spreadsheets/d/1LFfNwb9lRQpIosSEvV3O6zIwymUIWeG9L_k7cxw1jQs/edit?gid=0"
 
-# Columns expected
 EXPECTED_COLUMNS = [
     "call_id", "customer_name", "email", "phone number", "Booking Status", "voice_agent_name",
     "call_date", "call_start_time", "call_end_time", "call_duration_seconds", "call_duration_hms",
@@ -25,34 +24,43 @@ EXPECTED_COLUMNS = [
     "customer_lifetime_value", "call_category", "Upload_Timestamp"
 ]
 
-# Try to load Google Sheet
-@st.cache_data(show_spinner=True)
-def load_data():
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
-        client = gspread.authorize(creds)
+# -------- Sidebar: Service Account Upload ---------
+with st.sidebar:
+    st.subheader("🔑 Google Service Account")
+    uploaded_json = st.file_uploader(
+        "Upload your Google Service Account JSON file",
+        type="json",
+        key="service_account_json"
+    )
+    st.markdown("*Required for live Google Sheets connection*")
 
-        # Extract sheet name from URL
+# -------- Data Loading Function ---------
+@st.cache_data(show_spinner=True)
+def load_data(uploaded_json):
+    if uploaded_json is None:
+        st.info("Please upload your Google Service Account JSON file in the sidebar to load live data.")
+        return pd.DataFrame(columns=EXPECTED_COLUMNS)
+    try:
+        json_dict = json.load(uploaded_json)
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(json_dict, scope)
+        client = gspread.authorize(creds)
         sheet = client.open_by_url(GSHEET_URL).sheet1
         df = get_as_dataframe(sheet, evaluate_formulas=True).dropna(how="all")
-        df.columns = [col.strip() for col in df.columns]  # Strip whitespaces
+        df.columns = [col.strip() for col in df.columns]
         return df
     except Exception as e:
         st.warning(f"⚠️ Could not load live data. Using demo data instead. Error: {e}")
         return pd.DataFrame(columns=EXPECTED_COLUMNS)
 
-df = load_data()
+df = load_data(uploaded_json)
 
-# Pad missing columns if needed
 for col in EXPECTED_COLUMNS:
     if col not in df.columns:
         df[col] = ""
-
-# Reorder
 df = df[EXPECTED_COLUMNS]
 
-# Sidebar search
+# --------- SIDEBAR: SEARCH FILTERS ----------
 with st.sidebar:
     st.header("🔍 Search Filters")
     customer_name = st.text_input("Customer Name")
@@ -60,7 +68,7 @@ with st.sidebar:
     call_success = st.selectbox("Call Success", ["", "Yes", "No"])
     sentiment_range = st.slider("Sentiment Score", -1.0, 1.0, (-1.0, 1.0))
 
-# Apply filters
+# --------- FILTERS ----------
 filtered_df = df.copy()
 if customer_name:
     filtered_df = filtered_df[filtered_df["customer_name"].str.contains(customer_name, case=False, na=False)]
@@ -73,7 +81,7 @@ filtered_df = filtered_df[
     (filtered_df["sentiment_score"].astype(str).replace("None", "0").astype(float) <= sentiment_range[1])
 ]
 
-# Tabs
+# --------- TABS ---------
 tab1, tab2, tab3, tab4 = st.tabs(["📋 All Calls", "📈 Analytics", "🧠 AI Summary", "🔊 Recordings"])
 
 with tab1:
