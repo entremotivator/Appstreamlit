@@ -12,3 +12,4 @@ streamlit-aggrid>=0.3.4
 streamlit-option-menu>=0.3.6
 python-dotenv>=1.0.0
 streamlit_calendar
+fpdf
