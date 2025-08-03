@@ -15,3 +15,4 @@ streamlit_calendar
 fpdf
 gspread
 oauth2client
+streamlit_autorefresh
