@@ -1,624 +1,665 @@
 import streamlit as st
 import pandas as pd
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import json
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta, time
-import uuid
-from utils.auth import require_auth
-from utils.gsheet import get_sheet_as_df, update_sheet_from_df
-from utils.validators import validate_required_fields
+from datetime import datetime, timedelta
+import numpy as np
 
-@require_auth
-def main():
-    st.title("🕐 Appointment Booking System")
-    
-    # Tabs for appointment management
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Booking Management", "⚙️ Availability Settings", "📊 Booking Analytics", "🔔 Notifications"])
-    
-    with tab1:
-        show_booking_management()
-    
-    with tab2:
-        show_availability_settings()
-    
-    with tab3:
-        show_booking_analytics()
-    
-    with tab4:
-        show_notifications()
+# ---------- Configuration ----------
+STATIC_SHEET_URL = "https://docs.google.com/spreadsheets/d/1LFfNwb9lRQpIosSEvV3O6zIwymUIWeG9L_k7cxw1jQs/edit#gid=0"
+SHEET_SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
-def show_booking_management():
-    """Main booking management interface"""
-    st.subheader("Appointment Booking Management")
+# ---------- Streamlit Page Settings ----------
+st.set_page_config(
+    page_title="🚀 Advanced CRM System", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for better styling
+st.markdown("""
+<style>
+    .metric-card {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin: 0.5rem 0;
+    }
+    .status-badge {
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: bold;
+    }
+    .confirmed { background-color: #28a745; color: white; }
+    .pending { background-color: #ffc107; color: black; }
+    .cancelled { background-color: #dc3545; color: white; }
+    .completed { background-color: #6c757d; color: white; }
+</style>
+""", unsafe_allow_html=True)
+
+st.title("🚀 Advanced CRM System")
+
+# ---------- Sidebar Navigation ----------
+def sidebar_navigation():
+    st.sidebar.header("🔐 Google Sheets Access")
+    json_file = st.sidebar.file_uploader("Upload your `service_account.json`", type="json")
     
-    # Quick stats
+    st.sidebar.markdown("---")
+    st.sidebar.header("📊 Navigation")
+    page = st.sidebar.selectbox(
+        "Select Page",
+        ["📋 Dashboard", "📅 Appointments", "👥 Contacts", "🎯 Leads", "📈 Analytics", "⚙️ Settings"]
+    )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("✅ **Data Source:**")
+    st.sidebar.code(STATIC_SHEET_URL, language="text")
+    
+    return json_file, page
+
+# ---------- Load Google Sheets Data ----------
+@st.cache_data(show_spinner=True)
+def load_gsheet_data(credentials_dict):
+    try:
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(credentials_dict, SHEET_SCOPE)
+        client = gspread.authorize(creds)
+        sheet = client.open_by_url(STATIC_SHEET_URL).sheet1
+        data = sheet.get_all_records()
+        return pd.DataFrame(data)
+    except Exception as e:
+        st.error(f"Error loading Google Sheets data: {e}")
+        return None
+
+# ---------- Enhanced Demo Data ----------
+def get_demo_data():
+    # Appointments data
+    appointments = pd.DataFrame([
+        {
+            "Email": "customallstars@gmail.com",
+            "Guest Email": "client1@company.com",
+            "Name": "Vietnamese Services",
+            "Status": "confirmed",
+            "Event ID": "7e62f941-c6f8-42c8-bf2b-fac739b2ded7",
+            "Start Time (12hr)": "7/24/2025 1:00pm",
+            "Start Time (24hr)": "7/24/2025 13:00",
+            "Google Meet Link": "https://meet.google.com/kkp-htju-itz",
+            "Duration": "60 min",
+            "Type": "Consultation"
+        },
+        {
+            "Email": "customallstars@gmail.com",
+            "Guest Email": "don.hudson@email.com",
+            "Name": "Don Hudson",
+            "Status": "confirmed",
+            "Event ID": "d1b7ff1b-f4a1-4337-9416-928bb3f3b2ab",
+            "Start Time (12hr)": "7/24/2025 2:00pm",
+            "Start Time (24hr)": "7/24/2025 14:00",
+            "Google Meet Link": "https://meet.google.com/ebj-ctqh-dxf",
+            "Duration": "45 min",
+            "Type": "Follow-up"
+        },
+        {
+            "Email": "customallstars@gmail.com",
+            "Guest Email": "sarah.johnson@corp.com",
+            "Name": "Sarah Johnson",
+            "Status": "pending",
+            "Event ID": "abc123",
+            "Start Time (12hr)": "7/25/2025 10:00am",
+            "Start Time (24hr)": "7/25/2025 10:00",
+            "Google Meet Link": "https://meet.google.com/xyz-abc-def",
+            "Duration": "30 min",
+            "Type": "Sales Call"
+        }
+    ])
+    
+    # Contacts data
+    contacts = pd.DataFrame([
+        {
+            "Name": "Vietnamese Services",
+            "Email": "client1@company.com",
+            "Phone": "+1-555-0101",
+            "Company": "VN Corp",
+            "Position": "Manager",
+            "Lead Source": "Website",
+            "Tags": "VIP, Enterprise",
+            "Last Contact": "2025-07-20",
+            "Status": "Active Customer"
+        },
+        {
+            "Name": "Don Hudson",
+            "Email": "don.hudson@email.com",
+            "Phone": "+1-555-0102",
+            "Company": "Hudson LLC",
+            "Position": "CEO",
+            "Lead Source": "Referral",
+            "Tags": "High Value",
+            "Last Contact": "2025-07-22",
+            "Status": "Prospect"
+        },
+        {
+            "Name": "Sarah Johnson",
+            "Email": "sarah.johnson@corp.com",
+            "Phone": "+1-555-0103",
+            "Company": "Johnson Corp",
+            "Position": "Director",
+            "Lead Source": "LinkedIn",
+            "Tags": "Tech, SaaS",
+            "Last Contact": "2025-07-23",
+            "Status": "Lead"
+        }
+    ])
+    
+    # Leads data
+    leads = pd.DataFrame([
+        {
+            "Lead ID": "L001",
+            "Name": "Tech Startup Inc",
+            "Email": "contact@techstartup.com",
+            "Lead Score": 85,
+            "Stage": "Qualified",
+            "Source": "Google Ads",
+            "Value": "$50,000",
+            "Probability": "75%",
+            "Expected Close": "2025-08-15",
+            "Assigned To": "Sales Rep 1"
+        },
+        {
+            "Lead ID": "L002",
+            "Name": "Enterprise Solutions",
+            "Email": "info@enterprise.com",
+            "Lead Score": 92,
+            "Stage": "Proposal",
+            "Source": "Trade Show",
+            "Value": "$125,000",
+            "Probability": "60%",
+            "Expected Close": "2025-09-01",
+            "Assigned To": "Sales Rep 2"
+        },
+        {
+            "Lead ID": "L003",
+            "Name": "Small Business Co",
+            "Email": "hello@smallbiz.com",
+            "Lead Score": 45,
+            "Stage": "New",
+            "Source": "Website",
+            "Value": "$10,000",
+            "Probability": "25%",
+            "Expected Close": "2025-08-30",
+            "Assigned To": "Sales Rep 1"
+        }
+    ])
+    
+    return appointments, contacts, leads
+
+# ---------- Dashboard Page ----------
+def dashboard_page(appointments_df, contacts_df, leads_df):
+    st.header("📋 CRM Dashboard")
+    
+    # Key Metrics
     col1, col2, col3, col4 = st.columns(4)
     
-    if "gsheets_creds" in st.session_state:
-        df = get_sheet_as_df("appointments")
-        
-        if df is not None and not df.empty:
-            today = datetime.now().date()
-            today_appointments = df[pd.to_datetime(df['Date']).dt.date == today]
-            
-            with col1:
-                st.metric("📅 Today's Appointments", len(today_appointments))
-            
-            with col2:
-                pending_count = len(df[df['Status'] == 'Scheduled'])
-                st.metric("⏳ Pending", pending_count)
-            
-            with col3:
-                completed_today = len(today_appointments[today_appointments['Status'] == 'Completed'])
-                st.metric("✅ Completed Today", completed_today)
-            
-            with col4:
-                no_shows = len(df[df['Status'] == 'No-show'])
-                st.metric("❌ No-shows", no_shows)
-        else:
-            for col in [col1, col2, col3, col4]:
-                with col:
-                    st.metric("📊 Data", "No data")
-    
-    st.divider()
-    
-    # Booking interface
-    col1, col2 = st.columns([2, 1])
-    
     with col1:
-        st.markdown("### 📅 Quick Book Appointment")
-        
-        with st.form("quick_book_form"):
-            col_form1, col_form2 = st.columns(2)
-            
-            with col_form1:
-                customer_name = st.text_input("Customer Name *")
-                phone = st.text_input("Phone Number")
-                email = st.text_input("Email")
-            
-            with col_form2:
-                appointment_date = st.date_input("Date *", min_value=datetime.now().date())
-                appointment_time = st.time_input("Time *")
-                service = st.selectbox("Service *", [
-                    "Consultation", "Follow-up", "Treatment", "Assessment",
-                    "Meeting", "Training", "Support", "Other"
-                ])
-            
-            duration = st.selectbox("Duration", [15, 30, 45, 60, 90, 120], index=2)
-            notes = st.text_area("Notes")
-            
-            if st.form_submit_button("📅 Book Appointment", type="primary"):
-                book_appointment(customer_name, phone, email, appointment_date, appointment_time, service, duration, notes)
+        total_appointments = len(appointments_df)
+        st.metric("📅 Total Appointments", total_appointments)
     
     with col2:
-        st.markdown("### 🕐 Today's Schedule")
-        show_todays_schedule()
+        total_contacts = len(contacts_df)
+        st.metric("👥 Total Contacts", total_contacts)
     
-    st.divider()
+    with col3:
+        total_leads = len(leads_df)
+        st.metric("🎯 Active Leads", total_leads)
     
-    # Recent bookings
-    st.markdown("### 📋 Recent Bookings")
-    show_recent_bookings()
-
-def show_availability_settings():
-    """Configure availability and booking settings"""
-    st.subheader("Availability & Booking Settings")
+    with col4:
+        if 'Value' in leads_df.columns:
+            pipeline_value = leads_df['Value'].str.replace('$', '').str.replace(',', '').astype(float).sum()
+            st.metric("💰 Pipeline Value", f"${pipeline_value:,.0f}")
     
-    # Business hours configuration
-    st.markdown("### 🕒 Business Hours")
+    st.markdown("---")
     
+    # Charts Row
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("**Weekdays (Monday - Friday)**")
-        weekday_start = st.time_input("Start Time", value=time(9, 0), key="weekday_start")
-        weekday_end = st.time_input("End Time", value=time(17, 0), key="weekday_end")
-        weekday_break_start = st.time_input("Lunch Break Start", value=time(12, 0), key="weekday_break_start")
-        weekday_break_end = st.time_input("Lunch Break End", value=time(13, 0), key="weekday_break_end")
+        st.subheader("📊 Appointment Status Distribution")
+        if 'Status' in appointments_df.columns:
+            status_counts = appointments_df['Status'].value_counts()
+            fig = px.pie(values=status_counts.values, names=status_counts.index, 
+                        color_discrete_sequence=px.colors.qualitative.Set3)
+            st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        st.markdown("**Weekends (Saturday - Sunday)**")
-        weekend_enabled = st.checkbox("Weekend Appointments Available")
-        
-        if weekend_enabled:
-            weekend_start = st.time_input("Start Time", value=time(10, 0), key="weekend_start")
-            weekend_end = st.time_input("End Time", value=time(15, 0), key="weekend_end")
+        st.subheader("🎯 Lead Pipeline Stages")
+        if 'Stage' in leads_df.columns:
+            stage_counts = leads_df['Stage'].value_counts()
+            fig = px.bar(x=stage_counts.index, y=stage_counts.values,
+                        color=stage_counts.values, color_continuous_scale='Blues')
+            fig.update_layout(showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    # Recent Activity
+    st.subheader("🕐 Recent Activity")
+    recent_appointments = appointments_df.head(5)
+    st.dataframe(recent_appointments[['Name', 'Status', 'Start Time (12hr)', 'Type']], 
+                use_container_width=True)
+
+# ---------- Appointments Page ----------
+def appointments_page(df):
+    st.header("📅 Appointment Manager")
+    
+    # Filters
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        status_filter = st.multiselect(
+            "Filter by Status",
+            options=df['Status'].unique() if 'Status' in df.columns else [],
+            default=df['Status'].unique() if 'Status' in df.columns else []
+        )
+    
+    with col2:
+        if 'Type' in df.columns:
+            type_filter = st.multiselect(
+                "Filter by Type",
+                options=df['Type'].unique(),
+                default=df['Type'].unique()
+            )
         else:
-            st.info("Weekend appointments are disabled")
+            type_filter = []
     
-    # Service configuration
-    st.markdown("### 🛠️ Service Configuration")
+    with col3:
+        search_term = st.text_input("🔍 Search by Name or Email")
     
-    services_config = [
-        {"name": "Consultation", "duration": 60, "buffer": 15, "enabled": True},
-        {"name": "Follow-up", "duration": 30, "buffer": 10, "enabled": True},
-        {"name": "Treatment", "duration": 90, "buffer": 15, "enabled": True},
-        {"name": "Assessment", "duration": 45, "buffer": 15, "enabled": True},
-    ]
+    # Apply filters
+    filtered_df = df.copy()
+    if status_filter and 'Status' in df.columns:
+        filtered_df = filtered_df[filtered_df['Status'].isin(status_filter)]
+    if type_filter and 'Type' in df.columns:
+        filtered_df = filtered_df[filtered_df['Type'].isin(type_filter)]
+    if search_term:
+        filtered_df = filtered_df[
+            filtered_df['Name'].str.contains(search_term, case=False, na=False) |
+            filtered_df['Email'].str.contains(search_term, case=False, na=False)
+        ]
     
-    for i, service in enumerate(services_config):
-        with st.expander(f"⚙️ {service['name']} Settings"):
+    # Display appointments
+    st.subheader(f"📋 Appointments ({len(filtered_df)} results)")
+    
+    # Enhanced display with status badges
+    for idx, row in filtered_df.iterrows():
+        with st.expander(f"📅 {row['Name']} - {row['Start Time (12hr)']}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**Email:** {row['Email']}")
+                st.write(f"**Guest Email:** {row['Guest Email']}")
+                if 'Duration' in row:
+                    st.write(f"**Duration:** {row['Duration']}")
+                if 'Type' in row:
+                    st.write(f"**Type:** {row['Type']}")
+            with col2:
+                status = row['Status']
+                st.markdown(f'<span class="status-badge {status}">{status.upper()}</span>', 
+                           unsafe_allow_html=True)
+                if 'Google Meet Link' in row and row['Google Meet Link']:
+                    st.markdown(f"[🎥 Join Meeting]({row['Google Meet Link']})")
+    
+    # Bulk actions
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="⬇️ Download Filtered Data",
+            data=filtered_df.to_csv(index=False),
+            file_name=f"appointments_filtered_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+    
+    with col2:
+        if st.button("📧 Send Reminder Emails"):
+            st.success(f"Reminder emails would be sent to {len(filtered_df)} contacts")
+
+# ---------- Contacts Page ----------
+def contacts_page(contacts_df):
+    st.header("👥 Contact Management")
+    
+    # Add new contact form
+    with st.expander("➕ Add New Contact"):
+        col1, col2 = st.columns(2)
+        with col1:
+            new_name = st.text_input("Name")
+            new_email = st.text_input("Email")
+            new_phone = st.text_input("Phone")
+        with col2:
+            new_company = st.text_input("Company")
+            new_position = st.text_input("Position")
+            new_source = st.selectbox("Lead Source", ["Website", "Referral", "LinkedIn", "Google Ads", "Trade Show"])
+        
+        new_tags = st.text_input("Tags (comma-separated)")
+        
+        if st.button("➕ Add Contact"):
+            st.success(f"Contact '{new_name}' would be added to the system")
+    
+    st.markdown("---")
+    
+    # Contact filters
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        status_filter = st.multiselect(
+            "Filter by Status",
+            options=contacts_df['Status'].unique() if 'Status' in contacts_df.columns else [],
+            default=contacts_df['Status'].unique() if 'Status' in contacts_df.columns else []
+        )
+    
+    with col2:
+        source_filter = st.multiselect(
+            "Filter by Lead Source",
+            options=contacts_df['Lead Source'].unique() if 'Lead Source' in contacts_df.columns else [],
+            default=contacts_df['Lead Source'].unique() if 'Lead Source' in contacts_df.columns else []
+        )
+    
+    with col3:
+        search_contacts = st.text_input("🔍 Search Contacts")
+    
+    # Apply filters
+    filtered_contacts = contacts_df.copy()
+    if status_filter and 'Status' in contacts_df.columns:
+        filtered_contacts = filtered_contacts[filtered_contacts['Status'].isin(status_filter)]
+    if source_filter and 'Lead Source' in contacts_df.columns:
+        filtered_contacts = filtered_contacts[filtered_contacts['Lead Source'].isin(source_filter)]
+    if search_contacts:
+        filtered_contacts = filtered_contacts[
+            filtered_contacts['Name'].str.contains(search_contacts, case=False, na=False) |
+            filtered_contacts['Company'].str.contains(search_contacts, case=False, na=False)
+        ]
+    
+    # Display contacts
+    st.subheader(f"👥 Contacts ({len(filtered_contacts)} results)")
+    st.dataframe(filtered_contacts, use_container_width=True)
+    
+    # Contact actions
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.download_button(
+            "⬇️ Export Contacts",
+            data=filtered_contacts.to_csv(index=False),
+            file_name=f"contacts_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv"
+        )
+    
+    with col2:
+        if st.button("📧 Email Campaign"):
+            st.success(f"Email campaign would be sent to {len(filtered_contacts)} contacts")
+    
+    with col3:
+        if st.button("🏷️ Bulk Tag"):
+            bulk_tag = st.text_input("Enter tag to apply")
+            if bulk_tag:
+                st.success(f"Tag '{bulk_tag}' would be applied to selected contacts")
+
+# ---------- Leads Page ----------
+def leads_page(leads_df):
+    st.header("🎯 Lead Management")
+    
+    # Lead pipeline overview
+    col1, col2, col3, col4 = st.columns(4)
+    
+    stage_counts = leads_df['Stage'].value_counts() if 'Stage' in leads_df.columns else {}
+    
+    with col1:
+        new_leads = stage_counts.get('New', 0)
+        st.metric("🆕 New Leads", new_leads)
+    
+    with col2:
+        qualified = stage_counts.get('Qualified', 0)
+        st.metric("✅ Qualified", qualified)
+    
+    with col3:
+        proposals = stage_counts.get('Proposal', 0)
+        st.metric("📋 Proposals", proposals)
+    
+    with col4:
+        if 'Lead Score' in leads_df.columns:
+            avg_score = leads_df['Lead Score'].mean()
+            st.metric("📊 Avg Lead Score", f"{avg_score:.0f}")
+    
+    # Lead pipeline visualization
+    st.subheader("🔄 Sales Pipeline")
+    if 'Stage' in leads_df.columns and 'Value' in leads_df.columns:
+        pipeline_data = leads_df.groupby('Stage')['Value'].apply(
+            lambda x: x.str.replace('$', '').str.replace(',', '').astype(float).sum()
+        ).reset_index()
+        
+        fig = px.funnel(pipeline_data, x='Value', y='Stage', 
+                       title="Sales Pipeline by Stage")
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Lead details
+    st.subheader("📋 Lead Details")
+    
+    # Lead filters
+    col1, col2 = st.columns(2)
+    with col1:
+        stage_filter = st.selectbox(
+            "Filter by Stage",
+            options=['All'] + list(leads_df['Stage'].unique()) if 'Stage' in leads_df.columns else ['All']
+        )
+    
+    with col2:
+        score_range = st.slider("Minimum Lead Score", 0, 100, 0)
+    
+    # Apply filters
+    filtered_leads = leads_df.copy()
+    if stage_filter != 'All' and 'Stage' in leads_df.columns:
+        filtered_leads = filtered_leads[filtered_leads['Stage'] == stage_filter]
+    if 'Lead Score' in leads_df.columns:
+        filtered_leads = filtered_leads[filtered_leads['Lead Score'] >= score_range]
+    
+    # Display leads with enhanced formatting
+    for idx, row in filtered_leads.iterrows():
+        with st.expander(f"🎯 {row['Name']} - Score: {row.get('Lead Score', 'N/A')}"):
             col1, col2, col3 = st.columns(3)
             
             with col1:
-                duration = st.number_input(
-                    "Duration (minutes)", 
-                    value=service['duration'], 
-                    min_value=15, 
-                    max_value=240,
-                    step=15,
-                    key=f"duration_{i}"
-                )
+                st.write(f"**Email:** {row['Email']}")
+                st.write(f"**Source:** {row.get('Source', 'N/A')}")
+                st.write(f"**Assigned To:** {row.get('Assigned To', 'N/A')}")
             
             with col2:
-                buffer_time = st.number_input(
-                    "Buffer Time (minutes)", 
-                    value=service['buffer'], 
-                    min_value=0, 
-                    max_value=60,
-                    step=5,
-                    key=f"buffer_{i}"
-                )
+                st.write(f"**Stage:** {row.get('Stage', 'N/A')}")
+                st.write(f"**Value:** {row.get('Value', 'N/A')}")
+                st.write(f"**Probability:** {row.get('Probability', 'N/A')}")
             
             with col3:
-                enabled = st.checkbox("Service Enabled", value=service['enabled'], key=f"enabled_{i}")
+                st.write(f"**Expected Close:** {row.get('Expected Close', 'N/A')}")
+                if st.button(f"📞 Contact {row['Name']}", key=f"contact_{idx}"):
+                    st.success(f"Contact action initiated for {row['Name']}")
+
+# ---------- Analytics Page ----------
+def analytics_page(appointments_df, contacts_df, leads_df):
+    st.header("📈 Analytics Dashboard")
     
-    # Booking rules
-    st.markdown("### 📏 Booking Rules")
-    
+    # Time-based analytics
     col1, col2 = st.columns(2)
     
     with col1:
-        advance_booking_days = st.number_input("Maximum days in advance", value=30, min_value=1, max_value=365)
-        min_notice_hours = st.number_input("Minimum notice hours", value=24, min_value=1, max_value=168)
-        max_daily_appointments = st.number_input("Max appointments per day", value=8, min_value=1, max_value=20)
+        st.subheader("📅 Appointments Over Time")
+        # Mock time series data
+        dates = pd.date_range(start='2025-07-01', end='2025-07-31', freq='D')
+        appointment_counts = np.random.randint(0, 5, len(dates))
+        time_series_df = pd.DataFrame({'Date': dates, 'Appointments': appointment_counts})
+        
+        fig = px.line(time_series_df, x='Date', y='Appointments',
+                     title="Daily Appointment Bookings")
+        st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        allow_same_day = st.checkbox("Allow same-day booking", value=False)
-        require_confirmation = st.checkbox("Require email confirmation", value=True)
-        send_reminders = st.checkbox("Send appointment reminders", value=True)
-        
-        if send_reminders:
-            reminder_hours = st.selectbox("Reminder timing", [1, 2, 4, 24, 48], index=3)
-    
-    # Save settings
-    if st.button("💾 Save Settings", type="primary"):
-        settings = {
-            "weekday_hours": f"{weekday_start} - {weekday_end}",
-            "weekend_enabled": weekend_enabled,
-            "advance_booking_days": advance_booking_days,
-            "min_notice_hours": min_notice_hours,
-            "max_daily_appointments": max_daily_appointments,
-            "allow_same_day": allow_same_day,
-            "require_confirmation": require_confirmation,
-            "send_reminders": send_reminders
+        st.subheader("🎯 Lead Conversion Funnel")
+        funnel_data = {
+            'Stage': ['Leads', 'Qualified', 'Proposals', 'Closed'],
+            'Count': [100, 60, 30, 15]
         }
-        
-        st.success("✅ Settings saved successfully!")
-        st.json(settings)
-
-def show_booking_analytics():
-    """Show booking analytics and insights"""
-    st.subheader("Booking Analytics & Insights")
+        fig = px.funnel(funnel_data, x='Count', y='Stage')
+        st.plotly_chart(fig, use_container_width=True)
     
-    if "gsheets_creds" in st.session_state:
-        df = get_sheet_as_df("appointments")
-        
-        if df is not None and not df.empty:
-            df['Date'] = pd.to_datetime(df['Date'])
-            df['Hour'] = pd.to_datetime(df['Time'], format='%H:%M').dt.hour
-            
-            # Time period selector
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                date_range = st.date_input(
-                    "Analysis Period",
-                    value=(datetime.now().date() - timedelta(days=30), datetime.now().date()),
-                    help="Select date range for analysis"
-                )
-            
-            with col2:
-                if isinstance(date_range, tuple) and len(date_range) == 2:
-                    filtered_df = df[
-                        (df['Date'].dt.date >= date_range[0]) & 
-                        (df['Date'].dt.date <= date_range[1])
-                    ]
-                else:
-                    filtered_df = df
-            
-            # Key metrics
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                total_bookings = len(filtered_df)
-                st.metric("📅 Total Bookings", total_bookings)
-            
-            with col2:
-                completion_rate = len(filtered_df[filtered_df['Status'] == 'Completed']) / total_bookings * 100 if total_bookings > 0 else 0
-                st.metric("✅ Completion Rate", f"{completion_rate:.1f}%")
-            
-            with col3:
-                no_show_rate = len(filtered_df[filtered_df['Status'] == 'No-show']) / total_bookings * 100 if total_bookings > 0 else 0
-                st.metric("❌ No-show Rate", f"{no_show_rate:.1f}%")
-            
-            with col4:
-                avg_duration = filtered_df['Duration'].astype(int).mean() if not filtered_df.empty else 0
-                st.metric("⏱️ Avg Duration", f"{avg_duration:.0f} min")
-            
-            # Charts
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Bookings by day of week
-                filtered_df['DayOfWeek'] = filtered_df['Date'].dt.day_name()
-                day_counts = filtered_df['DayOfWeek'].value_counts()
-                
-                # Order days properly
-                day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                day_counts = day_counts.reindex([day for day in day_order if day in day_counts.index])
-                
-                fig_days = px.bar(
-                    x=day_counts.index,
-                    y=day_counts.values,
-                    title="Bookings by Day of Week"
-                )
-                st.plotly_chart(fig_days, use_container_width=True)
-            
-            with col2:
-                # Bookings by hour
-                hour_counts = filtered_df['Hour'].value_counts().sort_index()
-                
-                fig_hours = px.bar(
-                    x=hour_counts.index,
-                    y=hour_counts.values,
-                    title="Bookings by Hour of Day"
-                )
-                fig_hours.update_xaxis(title="Hour")
-                fig_hours.update_yaxis(title="Number of Bookings")
-                st.plotly_chart(fig_hours, use_container_width=True)
-            
-            # Service popularity
-            st.subheader("📊 Service Analysis")
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                service_counts = filtered_df['Service'].value_counts()
-                fig_services = px.pie(
-                    values=service_counts.values,
-                    names=service_counts.index,
-                    title="Service Distribution"
-                )
-                st.plotly_chart(fig_services, use_container_width=True)
-            
-            with col2:
-                # Monthly booking trend
-                monthly_bookings = filtered_df.groupby(filtered_df['Date'].dt.to_period('M')).size()
-                
-                fig_trend = px.line(
-                    x=monthly_bookings.index.astype(str),
-                    y=monthly_bookings.values,
-                    title="Monthly Booking Trend"
-                )
-                st.plotly_chart(fig_trend, use_container_width=True)
-            
-            # Peak times analysis
-            st.subheader("🕐 Peak Times Analysis")
-            
-            # Create heatmap of bookings by day and hour
-            pivot_data = filtered_df.pivot_table(
-                values='Duration', 
-                index='DayOfWeek', 
-                columns='Hour', 
-                aggfunc='count', 
-                fill_value=0
-            )
-            
-            # Reorder days
-            pivot_data = pivot_data.reindex([day for day in day_order if day in pivot_data.index])
-            
-            fig_heatmap = px.imshow(
-                pivot_data,
-                title="Booking Heatmap: Day vs Hour",
-                color_continuous_scale='Blues',
-                aspect='auto'
-            )
-            fig_heatmap.update_xaxis(title="Hour of Day")
-            fig_heatmap.update_yaxis(title="Day of Week")
-            st.plotly_chart(fig_heatmap, use_container_width=True)
-            
-        else:
-            st.info("No booking data available for analysis.")
-    else:
-        st.warning("⚠️ Please connect Google Sheets to view analytics.")
-
-def show_notifications():
-    """Show and manage notifications"""
-    st.subheader("📢 Notifications & Reminders")
+    # Performance metrics
+    st.subheader("🏆 Performance Metrics")
     
-    # Notification settings
-    st.markdown("### ⚙️ Notification Settings")
-    
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("**Email Notifications**")
-        email_new_booking = st.checkbox("New booking received", value=True)
-        email_cancellation = st.checkbox("Booking cancelled", value=True)
-        email_reminder = st.checkbox("Daily schedule summary", value=True)
-        email_no_show = st.checkbox("No-show alerts", value=True)
+        st.metric("📊 Conversion Rate", "15%", delta="2.1%")
+        st.metric("⏱️ Avg. Response Time", "2.3 hours", delta="-0.5 hours")
     
     with col2:
-        st.markdown("**SMS Notifications**")
-        sms_new_booking = st.checkbox("New booking SMS", value=False)
-        sms_reminder = st.checkbox("Appointment reminders", value=True)
-        sms_confirmation = st.checkbox("Booking confirmations", value=True)
-        sms_follow_up = st.checkbox("Follow-up messages", value=False)
+        st.metric("💰 Revenue This Month", "$45,000", delta="$12,000")
+        st.metric("📞 Calls Made", "127", delta="23")
     
-    # Recent notifications
-    st.markdown("### 📋 Recent Notifications")
+    with col3:
+        st.metric("✉️ Email Open Rate", "34%", delta="4.2%")
+        st.metric("🎯 Lead Quality Score", "78", delta="5")
     
-    # Sample notification data (would be from database in real app)
-    notifications = [
-        {
-            "time": "2 minutes ago",
-            "type": "New Booking",
-            "message": "John Doe booked a consultation for tomorrow at 2:00 PM",
-            "status": "unread"
-        },
-        {
-            "time": "1 hour ago",
-            "type": "Reminder Sent",
-            "message": "Appointment reminder sent to jane.smith@email.com",
-            "status": "read"
-        },
-        {
-            "time": "3 hours ago",
-            "type": "Cancellation",
-            "message": "Bob Johnson cancelled appointment for today 3:00 PM",
-            "status": "read"
-        },
-        {
-            "time": "Yesterday",
-            "type": "No-show",
-            "message": "Sarah Wilson did not attend scheduled appointment",
-            "status": "read"
-        }
-    ]
+    # Advanced analytics
+    st.subheader("🔍 Advanced Analytics")
     
-    for notification in notifications:
-        status_icon = "🔵" if notification["status"] == "unread" else "⚪"
-        type_icon = {
-            "New Booking": "📅",
-            "Reminder Sent": "📧",
-            "Cancellation": "❌",
-            "No-show": "⚠️"
-        }.get(notification["type"], "📢")
+    tab1, tab2, tab3 = st.tabs(["Lead Sources", "Revenue Forecast", "Activity Heatmap"])
+    
+    with tab1:
+        if 'Lead Source' in contacts_df.columns:
+            source_data = contacts_df['Lead Source'].value_counts()
+            fig = px.bar(x=source_data.index, y=source_data.values,
+                        title="Contacts by Lead Source")
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with tab2:
+        # Mock revenue forecast
+        forecast_dates = pd.date_range(start='2025-08-01', end='2025-12-31', freq='M')
+        forecast_revenue = [50000, 55000, 60000, 58000, 65000]
+        forecast_df = pd.DataFrame({'Month': forecast_dates, 'Projected Revenue': forecast_revenue})
         
-        with st.expander(f"{status_icon} {type_icon} {notification['type']} - {notification['time']}"):
-            st.write(notification["message"])
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                if notification["status"] == "unread":
-                    if st.button("Mark as Read", key=f"read_{notification['time']}"):
-                        st.success("Marked as read")
-            
-            with col2:
-                if st.button("Delete", key=f"delete_{notification['time']}"):
-                    st.success("Notification deleted")
+        fig = px.line(forecast_df, x='Month', y='Projected Revenue',
+                     title="Revenue Forecast")
+        st.plotly_chart(fig, use_container_width=True)
     
-    # Upcoming reminders
-    st.markdown("### ⏰ Upcoming Reminders")
-    
-    if "gsheets_creds" in st.session_state:
-        df = get_sheet_as_df("appointments")
+    with tab3:
+        # Mock activity heatmap data
+        activities = ['Calls', 'Emails', 'Meetings', 'Proposals']
+        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+        activity_data = np.random.randint(1, 10, (len(activities), len(days)))
         
-        if df is not None and not df.empty:
-            tomorrow = datetime.now().date() + timedelta(days=1)
-            upcoming = df[
-                (pd.to_datetime(df['Date']).dt.date == tomorrow) &
-                (df['Status'].isin(['Scheduled', 'Confirmed']))
-            ]
-            
-            if not upcoming.empty:
-                st.markdown(f"**{len(upcoming)} reminders to send tomorrow:**")
-                
-                for _, appointment in upcoming.iterrows():
-                    st.markdown(f"- 📧 {appointment['Customer']} at {appointment['Time']} ({appointment['Service']})")
-            else:
-                st.info("No reminders scheduled for tomorrow")
+        fig = px.imshow(activity_data, 
+                       x=days, y=activities,
+                       title="Weekly Activity Heatmap",
+                       color_continuous_scale="Blues")
+        st.plotly_chart(fig, use_container_width=True)
+
+# ---------- Settings Page ----------
+def settings_page():
+    st.header("⚙️ CRM Settings")
     
-    # Manual notification sender
-    st.markdown("### 📤 Send Manual Notification")
+    tab1, tab2, tab3 = st.tabs(["General", "Notifications", "Integrations"])
     
-    with st.form("manual_notification"):
+    with tab1:
+        st.subheader("🔧 General Settings")
+        
         col1, col2 = st.columns(2)
-        
         with col1:
-            recipient = st.text_input("Recipient (email or phone)")
-            notification_type = st.selectbox("Type", ["Email", "SMS"])
+            st.text_input("Company Name", value="Your Company")
+            st.selectbox("Time Zone", ["UTC", "EST", "PST", "CST"])
+            st.selectbox("Date Format", ["MM/DD/YYYY", "DD/MM/YYYY", "YYYY-MM-DD"])
         
         with col2:
-            subject = st.text_input("Subject")
-            message = st.text_area("Message")
+            st.selectbox("Currency", ["USD", "EUR", "GBP", "CAD"])
+            st.number_input("Default Meeting Duration (minutes)", value=30)
+            st.selectbox("Business Hours", ["9 AM - 5 PM", "8 AM - 6 PM", "24/7"])
+    
+    with tab2:
+        st.subheader("🔔 Notification Settings")
         
-        if st.form_submit_button("📤 Send Notification"):
-            if recipient and message:
-                st.success(f"✅ {notification_type} sent to {recipient}")
-            else:
-                st.error("Please fill in recipient and message")
+        st.checkbox("Email notifications for new leads", value=True)
+        st.checkbox("SMS alerts for urgent appointments", value=False)
+        st.checkbox("Daily activity digest", value=True)
+        st.checkbox("Weekly performance report", value=True)
+        
+        st.selectbox("Reminder frequency", ["15 minutes", "30 minutes", "1 hour", "2 hours"])
+    
+    with tab3:
+        st.subheader("🔗 Integrations")
+        
+        integrations = [
+            {"name": "Google Calendar", "status": "Connected", "color": "green"},
+            {"name": "Outlook", "status": "Not Connected", "color": "red"},
+            {"name": "Slack", "status": "Connected", "color": "green"},
+            {"name": "Zoom", "status": "Not Connected", "color": "red"},
+            {"name": "Mailchimp", "status": "Connected", "color": "green"}
+        ]
+        
+        for integration in integrations:
+            col1, col2, col3 = st.columns([3, 2, 1])
+            with col1:
+                st.write(f"**{integration['name']}**")
+            with col2:
+                st.markdown(f"<span style='color: {integration['color']}'>{integration['status']}</span>", 
+                           unsafe_allow_html=True)
+            with col3:
+                action = "Disconnect" if integration['status'] == "Connected" else "Connect"
+                st.button(action, key=f"{integration['name']}_action")
 
-def show_todays_schedule():
-    """Show today's appointment schedule"""
-    if "gsheets_creds" in st.session_state:
-        df = get_sheet_as_df("appointments")
-        
-        if df is not None and not df.empty:
-            today = datetime.now().date()
-            today_appointments = df[pd.to_datetime(df['Date']).dt.date == today]
+# ---------- Main Application Logic ----------
+def main():
+    json_file, selected_page = sidebar_navigation()
+    
+    # Load data
+    if json_file:
+        try:
+            credentials = json_file.read()
+            credentials_dict = json.loads(credentials)
+            gsheet_data = load_gsheet_data(credentials_dict)
             
-            if not today_appointments.empty:
-                today_appointments = today_appointments.sort_values('Time')
-                
-                for _, appointment in today_appointments.iterrows():
-                    status_color = {
-                        'Scheduled': '🟡',
-                        'Completed': '🟢',
-                        'Cancelled': '🔴',
-                        'No-show': '⚫'
-                    }.get(appointment['Status'], '⚪')
-                    
-                    st.markdown(f"""
-                    {status_color} **{appointment['Time']}** - {appointment['Customer']}  
-                    {appointment['Service']} ({appointment['Duration']} min)
-                    """)
+            if gsheet_data is not None:
+                st.success("✅ Live data loaded from Google Sheets.")
+                appointments_df = gsheet_data
+                # For demo purposes, create mock contacts and leads from appointments
+                contacts_df = pd.DataFrame({
+                    'Name': appointments_df['Name'],
+                    'Email': appointments_df['Guest Email'],
+                    'Status': 'Active'
+                })
+                leads_df = pd.DataFrame()  # Empty for now
             else:
-                st.info("No appointments scheduled for today")
-        else:
-            st.info("No appointment data available")
+                st.warning("⚠️ Failed to load live data. Using demo data.")
+                appointments_df, contacts_df, leads_df = get_demo_data()
+        except Exception as e:
+            st.error(f"❌ Error processing credentials: {e}")
+            appointments_df, contacts_df, leads_df = get_demo_data()
     else:
-        st.warning("Connect Google Sheets to view schedule")
-
-def show_recent_bookings():
-    """Show recent bookings with quick actions"""
-    if "gsheets_creds" in st.session_state:
-        df = get_sheet_as_df("appointments")
-        
-        if df is not None and not df.empty:
-            # Get last 10 appointments
-            df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'])
-            recent_bookings = df.nlargest(10, 'DateTime')
-            
-            for _, booking in recent_bookings.iterrows():
-                with st.expander(f"📅 {booking['Customer']} - {booking['Date']} {booking['Time']}"):
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        st.write(f"**Service:** {booking['Service']}")
-                        st.write(f"**Duration:** {booking['Duration']} min")
-                        st.write(f"**Status:** {booking['Status']}")
-                    
-                    with col2:
-                        st.write(f"**Phone:** {booking.get('Phone', 'N/A')}")
-                        st.write(f"**Email:** {booking.get('Email', 'N/A')}")
-                    
-                    with col3:
-                        if st.button("✏️ Edit", key=f"edit_recent_{booking.name}"):
-                            st.info("Edit functionality would open here")
-                        
-                        if st.button("❌ Cancel", key=f"cancel_recent_{booking.name}"):
-                            update_appointment_status(booking.name, "Cancelled")
-        else:
-            st.info("No recent bookings to display")
-
-def book_appointment(customer_name, phone, email, appointment_date, appointment_time, service, duration, notes):
-    """Book a new appointment"""
-    if not customer_name or not service:
-        st.error("❌ Please fill in required fields (Customer Name and Service)")
-        return
+        st.info("📄 Upload credentials to view live data. Using demo data.")
+        appointments_df, contacts_df, leads_df = get_demo_data()
     
-    # Check for conflicts
-    if check_booking_conflict(appointment_date, appointment_time, duration):
-        st.error("❌ Time slot conflict detected. Please choose a different time.")
-        return
+    # Route to selected page
+    if selected_page == "📋 Dashboard":
+        dashboard_page(appointments_df, contacts_df, leads_df)
+    elif selected_page == "📅 Appointments":
+        appointments_page(appointments_df)
+    elif selected_page == "👥 Contacts":
+        contacts_page(contacts_df)
+    elif selected_page == "🎯 Leads":
+        leads_page(leads_df)
+    elif selected_page == "📈 Analytics":
+        analytics_page(appointments_df, contacts_df, leads_df)
+    elif selected_page == "⚙️ Settings":
+        settings_page()
     
-    # Create appointment record
-    appointment_id = f"APT-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    
-    new_appointment = {
-        "ID": appointment_id,
-        "Customer": customer_name,
-        "Phone": phone,
-        "Email": email,
-        "Date": appointment_date.strftime("%Y-%m-%d"),
-        "Time": appointment_time.strftime("%H:%M"),
-        "Service": service,
-        "Duration": duration,
-        "Status": "Scheduled",
-        "Notes": notes,
-        "Created_By": st.session_state.user_name,
-        "Created_Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    
-    if save_appointment_booking(new_appointment):
-        st.success(f"✅ Appointment booked successfully! ID: {appointment_id}")
-        st.balloons()
-        
-        # Send confirmation
-        if email:
-            st.info(f"📧 Confirmation email sent to {email}")
-    else:
-        st.error("❌ Failed to book appointment. Please try again.")
-
-def check_booking_conflict(appointment_date, appointment_time, duration):
-    """Check for booking conflicts"""
-    if "gsheets_creds" not in st.session_state:
-        return False
-    
-    df = get_sheet_as_df("appointments")
-    if df is None or df.empty:
-        return False
-    
-    # Convert to datetime for comparison
-    new_start = datetime.combine(appointment_date, appointment_time)
-    new_end = new_start + timedelta(minutes=duration)
-    
-    # Check existing appointments on the same date
-    df['Date'] = pd.to_datetime(df['Date']).dt.date
-    same_day_appointments = df[df['Date'] == appointment_date]
-    
-    for _, existing in same_day_appointments.iterrows():
-        if existing['Status'] in ['Cancelled', 'No-show']:
-            continue
-        
-        existing_start = datetime.combine(
-            appointment_date,
-            datetime.strptime(existing['Time'], '%H:%M').time()
-        )
-        existing_end = existing_start + timedelta(minutes=int(existing['Duration']))
-        
-        # Check for overlap
-        if (new_start < existing_end) and (new_end > existing_start):
-            return True
-    
-    return False
-
-def save_appointment_booking(appointment_data):
-    """Save appointment booking to Google Sheets"""
-    if "gsheets_creds" not in st.session_state:
-        return False
-    
-    try:
-        existing_df = get_sheet_as_df("appointments")
-        
-        if existing_df is not None:
-            new_df = pd.concat([existing_df, pd.DataFrame([appointment_data])], ignore_index=True)
-        else:
-            new_df = pd.DataFrame([appointment_data])
-        
-        return update_sheet_from_df("appointments", new_df)
-    except Exception as e:
-        st.error(f"Error saving appointment: {str(e)}")
-        return False
-
-def update_appointment_status(appointment_index, new_status):
-    """Update appointment status"""
-    if "gsheets_creds" not in st.session_state:
-        return False
-    
-    try:
-        df = get_sheet_as_df("appointments")
-        if df is not None:
-            df.loc[appointment_index, 'Status'] = new_status
-            if update_sheet_from_df("appointments", df):
-                st.success(f"✅ Appointment status updated to {new_status}")
-                st.rerun()
-        return True
-    except Exception as e:
-        st.error(f"Error updating appointment: {str(e)}")
-        return False
+    # Footer
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    with col2:
+        st.markdown("🚀 **Advanced CRM System** | Built with Streamlit")
 
 if __name__ == "__main__":
     main()
